@@ -2,12 +2,22 @@ use nmatrix::engine::{Cell, GlyphSet, Mode, Palette, Scene, color};
 
 #[test]
 fn new_space_scenes_parse_and_produce_moving_visible_patterns() {
-    for name in ["blackhole", "galaxy", "aurora", "plasma", "tunnel", "fireworks"] {
+    for name in [
+        "blackhole",
+        "galaxy",
+        "aurora",
+        "plasma",
+        "tunnel",
+        "fireworks",
+    ] {
         let mode = Mode::parse(name).unwrap_or_else(|| panic!("missing scene: {name}"));
         let mut scene = Scene::new(100, 30, mode, 0.8, GlyphSet::Matrix, 99);
         scene.update(2.0);
         let before = scene.frame().to_vec();
-        assert!(before.iter().filter(|c| c.level > 0.1).count() > 15, "empty {name}");
+        assert!(
+            before.iter().filter(|c| c.level > 0.1).count() > 15,
+            "empty {name}"
+        );
         scene.update(0.3);
         assert_ne!(before, scene.frame(), "static {name}");
     }

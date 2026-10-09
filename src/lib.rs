@@ -1,6 +1,8 @@
-pub mod engine;
 pub mod effects;
-mod patterns;
+pub mod engine;
 pub mod options;
+mod patterns;
+pub mod profile;
 pub mod render;
+pub mod signature;
 pub mod terminal;

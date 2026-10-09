@@ -65,9 +65,17 @@ struct Session {
 }
 impl Session {
     fn new(args: &[&str], basic: bool) -> Self {
+        Self::configured(args, basic, None)
+    }
+    fn configured(args: &[&str], basic: bool, config: Option<&std::path::Path>) -> Self {
         let (master, slave) = open_pair();
         let original = attributes(slave.as_raw_fd());
         let mut command = Command::new(env!("CARGO_BIN_EXE_nmatrix"));
+        if let Some(path) = config {
+            command.env("XDG_CONFIG_HOME", path);
+        } else {
+            command.arg("--no-name");
+        }
         command
             .args(args)
             .env("TERM", if basic { "linux" } else { "xterm-256color" })
@@ -164,6 +172,108 @@ impl Session {
         );
     }
 }
+
+static PROFILE_NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+struct ProfileDir(std::path::PathBuf);
+impl ProfileDir {
+    fn new() -> Self {
+        Self(std::env::temp_dir().join(format!(
+            "nmatrix-pty-profile-{}-{}",
+            std::process::id(),
+            PROFILE_NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        )))
+    }
+}
+impl Drop for ProfileDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn first_name_is_saved_and_second_launch_skips_setup() {
+    let dir = ProfileDir::new();
+    let mut first = Session::configured(&[], false, Some(&dir.0));
+    first.wait_for("YOUR NAME");
+    first.send("Mohamedx\x7f\r".as_bytes());
+    first.wait_for("/ RAIN /");
+    first.wait_for("Mohamed");
+    first.send(b"nq");
+    first.finish(0);
+    let path = dir.0.join("nmatrix/config");
+    let saved = std::fs::read_to_string(&path).unwrap();
+    let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+    let mut second = Session::configured(&[], false, Some(&dir.0));
+    second.wait_for("/ RAIN /");
+    assert!(!String::from_utf8_lossy(&second.output).contains("YOUR NAME"));
+    second.resize(22, 7);
+    second.pump(Duration::from_millis(40));
+    second.send(b"n\t\x1b[B\r?q");
+    second.finish(0);
+    assert_eq!(saved, std::fs::read_to_string(&path).unwrap());
+    assert_eq!(
+        modified,
+        std::fs::metadata(path).unwrap().modified().unwrap()
+    );
+}
+
+#[test]
+fn typed_unicode_and_fragmented_bytes_survive_backspace_and_arrow_keys() {
+    let dir = ProfileDir::new();
+    let mut s = Session::configured(&[], false, Some(&dir.0));
+    s.wait_for("YOUR NAME");
+    s.send(b"\x1b[C\x1b[D");
+    let name = "محمد".as_bytes();
+    s.send(&name[..1]);
+    s.pump(Duration::from_millis(8));
+    s.send(&name[1..]);
+    s.send("س\x7f\r".as_bytes());
+    s.wait_for("/ RAIN /");
+    s.send(b"q");
+    s.finish(0);
+    assert_eq!(
+        std::fs::read_to_string(dir.0.join("nmatrix/config")).unwrap(),
+        "name=محمد\n"
+    );
+}
+#[test]
+fn unicode_name_option_updates_existing_profile_and_no_name_bypasses_it() {
+    let dir = ProfileDir::new();
+    for name in ["Zack", "محمد"] {
+        let mut s = Session::configured(&["--name", name, "--mode", "galaxy"], true, Some(&dir.0));
+        s.wait_for("/ GALAXY /");
+        s.wait_for(name);
+        s.send(b"q");
+        s.finish(0);
+        assert!(!String::from_utf8_lossy(&s.output).contains("YOUR NAME"));
+    }
+    assert_eq!(
+        std::fs::read_to_string(dir.0.join("nmatrix/config")).unwrap(),
+        "name=محمد\n"
+    );
+    let absent = ProfileDir::new();
+    let mut s = Session::configured(&["--no-name"], false, Some(&absent.0));
+    s.wait_for("/ RAIN /");
+    s.send(b"q");
+    s.finish(0);
+    assert!(!absent.0.exists());
+}
+#[test]
+fn escape_and_signal_during_name_setup_restore_terminal_without_saving() {
+    for signal in [None, Some(libc::SIGTERM)] {
+        let dir = ProfileDir::new();
+        let mut s = Session::configured(&[], false, Some(&dir.0));
+        s.wait_for("YOUR NAME");
+        if let Some(signal) = signal {
+            assert_eq!(unsafe { libc::kill(s.child.id() as i32, signal) }, 0);
+            s.finish(128 + signal);
+        } else {
+            s.send(b"\x1b");
+            s.finish(0);
+        }
+        assert!(!dir.0.exists());
+    }
+}
 impl Drop for Session {
     fn drop(&mut self) {
         let _ = self.child.kill();
@@ -180,7 +290,12 @@ fn all_modes_start_resize_and_quit_cleanly() {
         "spiral",
         "glitch",
         "starfield",
-        "blackhole", "galaxy", "aurora", "plasma", "tunnel", "fireworks",
+        "blackhole",
+        "galaxy",
+        "aurora",
+        "plasma",
+        "tunnel",
+        "fireworks",
     ] {
         let mut s = Session::new(&["--mode", mode, "--seed", "7"], false);
         s.wait_for("NMATRIX");
@@ -196,7 +311,20 @@ fn all_modes_start_resize_and_quit_cleanly() {
 
 #[test]
 fn picker_and_live_effects_work_at_low_fps_and_resize() {
-    let mut s = Session::new(&["--mode", "galaxy", "--palette", "ice", "--echo", "--pulse", "--scanlines", "--fps", "1"], false);
+    let mut s = Session::new(
+        &[
+            "--mode",
+            "galaxy",
+            "--palette",
+            "ice",
+            "--echo",
+            "--pulse",
+            "--scanlines",
+            "--fps",
+            "1",
+        ],
+        false,
+    );
     s.wait_for("/ GALAXY /");
     s.send(b"\t");
     s.wait_for("NMATRIX / SCENES");

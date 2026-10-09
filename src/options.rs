@@ -1,5 +1,5 @@
-use crate::engine::{GlyphSet, Mode, Palette};
 use crate::effects::Settings;
+use crate::engine::{GlyphSet, Mode, Palette};
 use std::collections::VecDeque;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -17,6 +17,8 @@ Usage: nmatrix [OPTIONS]\n\n\
   --echo       add motion echoes\n\
   --pulse      pulse brightness\n\
   --scanlines  add alternating scanlines\n\
+  --name       set and save your name (1–20 characters)\n\
+  --no-name    skip the name prompt and banner; no config IO\n\
   --help       show this help\n\
   --version    show version\n\n\
 Keys: 1–9/0 modes | Tab picker | arrows/m cycle | c colors | g glyphs\n\
@@ -35,6 +37,8 @@ pub struct Options {
     pub seed: u64,
     pub demo: bool,
     pub effects: Settings,
+    pub name: Option<String>,
+    pub no_name: bool,
     pub help: bool,
     pub version: bool,
 }
@@ -54,6 +58,8 @@ impl Options {
                 .as_nanos() as u64,
             demo: false,
             effects: Settings::default(),
+            name: None,
+            no_name: false,
             help: false,
             version: false,
         };
@@ -66,6 +72,13 @@ impl Options {
                 "--echo" => result.effects.echo = true,
                 "--pulse" => result.effects.pulse = true,
                 "--scanlines" => result.effects.scanlines = true,
+                "--no-name" => result.no_name = true,
+                "--name" => {
+                    let value = iter
+                        .next()
+                        .ok_or_else(|| "--name needs a value".to_string())?;
+                    result.name = Some(crate::profile::validate_name(&value)?);
+                }
                 "--mode" | "--palette" | "--glyphs" | "--speed" | "--density" | "--fps"
                 | "--seed" => {
                     let value = iter.next().ok_or_else(|| format!("{flag} needs a value"))?;
@@ -104,6 +117,9 @@ impl Options {
                 _ => return Err(format!("unknown option: {flag}; use --help")),
             }
         }
+        if result.no_name && result.name.is_some() {
+            return Err("--name and --no-name cannot be combined".into());
+        }
         Ok(result)
     }
 }
@@ -112,6 +128,7 @@ impl Options {
 pub enum Key {
     Tab,
     Enter,
+    Backspace,
     Char(u8),
     Left,
     Right,
@@ -153,7 +170,7 @@ impl Controls {
             picker: false,
             selection: Mode::ALL.iter().position(|&m| m == options.mode).unwrap(),
             effects: options.effects,
-            signature: true,
+            signature: !options.no_name,
             surprise_state: options.seed,
         }
     }
@@ -161,11 +178,19 @@ impl Controls {
         if self.picker {
             match key {
                 Key::Escape | Key::Tab => self.picker = false,
-                Key::Up => self.selection = (self.selection+Mode::ALL.len()-1)%Mode::ALL.len(),
-                Key::Down => self.selection = (self.selection+1)%Mode::ALL.len(),
-                Key::Enter => { self.mode = Mode::ALL[self.selection%Mode::ALL.len()]; self.picker = false; }
+                Key::Up => {
+                    self.selection = (self.selection + Mode::ALL.len() - 1) % Mode::ALL.len()
+                }
+                Key::Down => self.selection = (self.selection + 1) % Mode::ALL.len(),
+                Key::Enter => {
+                    self.mode = Mode::ALL[self.selection % Mode::ALL.len()];
+                    self.picker = false;
+                }
                 Key::Char(b'q' | b'Q' | 3) => self.running = false,
-                Key::Char(c) if shortcut(c).is_some() => { self.mode = shortcut(c).unwrap(); self.picker = false; }
+                Key::Char(c) if shortcut(c).is_some() => {
+                    self.mode = shortcut(c).unwrap();
+                    self.picker = false;
+                }
                 _ => return false,
             }
             return true;
@@ -196,8 +221,13 @@ impl Controls {
             Key::Char(b'n') => self.signature = !self.signature,
             Key::Char(b'r') => {
                 self.surprise_state = crate::engine::hash(self.surprise_state);
-                self.mode = self.mode.next((1+self.surprise_state as usize%(Mode::ALL.len()-1)) as isize);
-                self.palette = self.palette.next((1+self.surprise_state.rotate_right(23) as usize%(Palette::ALL.len()-1)) as isize);
+                self.mode = self
+                    .mode
+                    .next((1 + self.surprise_state as usize % (Mode::ALL.len() - 1)) as isize);
+                self.palette = self.palette.next(
+                    (1 + self.surprise_state.rotate_right(23) as usize % (Palette::ALL.len() - 1))
+                        as isize,
+                );
             }
             _ => return false,
         }
@@ -206,7 +236,11 @@ impl Controls {
 }
 
 fn shortcut(key: u8) -> Option<Mode> {
-    let index = match key { b'1'..=b'9' => (key-b'1') as usize, b'0' => 9, _ => return None };
+    let index = match key {
+        b'1'..=b'9' => (key - b'1') as usize,
+        b'0' => 9,
+        _ => return None,
+    };
     Mode::ALL.get(index).copied()
 }
 
@@ -234,9 +268,13 @@ impl InputDecoder {
             if byte != 27 {
                 self.pending.pop_front();
                 self.escape_since = None;
-                if byte == 9 { events.push(Key::Tab); }
-                else if byte == 10 || byte == 13 { events.push(Key::Enter); }
-                else if byte == 3 || (32..=126).contains(&byte) {
+                if byte == 9 {
+                    events.push(Key::Tab);
+                } else if byte == 10 || byte == 13 {
+                    events.push(Key::Enter);
+                } else if byte == 8 || byte == 127 {
+                    events.push(Key::Backspace);
+                } else if byte == 3 || byte >= 32 {
                     events.push(Key::Char(byte));
                 }
                 continue;

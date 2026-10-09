@@ -1,6 +1,7 @@
-use nmatrix::engine::{Cell, Palette, Scene};
 use nmatrix::effects::Effects;
-use nmatrix::options::{Controls, HELP, InputDecoder, Options};
+use nmatrix::engine::{Cell, Palette, Scene};
+use nmatrix::options::{Controls, HELP, InputDecoder, Key, Options};
+use nmatrix::profile::{NameConfig, clip_text, validate_name};
 use nmatrix::render::{ColorDepth, Renderer, blend_frames};
 use nmatrix::terminal::Terminal;
 use std::fmt::Write;
@@ -20,6 +21,26 @@ fn run(options: Options) -> io::Result<i32> {
     }
     let terminal = Terminal::open(0, 1)?;
     let depth = ColorDepth::detect();
+    let name = if options.no_name {
+        None
+    } else {
+        let config = NameConfig::from_env()?;
+        if let Some(name) = &options.name {
+            config.save(name)?;
+            Some(name.clone())
+        } else if let Some(name) = config.load()? {
+            Some(name)
+        } else if let Some(name) = prompt_name(&terminal, depth)? {
+            config.save(&name)?;
+            Some(name)
+        } else {
+            return Ok(if Terminal::signal() == 0 {
+                0
+            } else {
+                128 + Terminal::signal()
+            });
+        }
+    };
     let mut renderer = Renderer::new(depth);
     let mut effects = Effects::default();
     let mut effect_dt = 0.0;
@@ -77,6 +98,7 @@ fn run(options: Options) -> io::Result<i32> {
             controls.hud,
             controls.help,
             controls.picker,
+            controls.signature,
         );
         let mut dirty = false;
         input.push(&bytes, now - origin);
@@ -130,7 +152,10 @@ fn run(options: Options) -> io::Result<i32> {
         if before.3 != controls.palette {
             palette_fade = Some((before.3, 0.0));
         }
-        if before.5 != controls.help || before.6 != controls.picker {
+        if before.5 != controls.help
+            || before.6 != controls.picker
+            || before.7 != controls.signature
+        {
             renderer.invalidate();
         }
         if dirty || now >= next_frame {
@@ -177,16 +202,101 @@ fn run(options: Options) -> io::Result<i32> {
                     controls.palette,
                     palette_from,
                 ));
+                if controls.signature && !controls.help && !controls.picker {
+                    if let Some(name) = &name {
+                        nmatrix::signature::draw(
+                            &mut output,
+                            width,
+                            scene_height,
+                            depth,
+                            controls.palette,
+                            name,
+                            scene_time,
+                        );
+                    }
+                }
                 if controls.hud {
                     hud(&mut output, width, height, depth, &controls);
                 }
                 if controls.help {
                     help_overlay(&mut output, width, scene.height, depth);
                 }
-                if controls.picker { picker_overlay(&mut output, width, scene.height, depth, &controls); }
+                if controls.picker {
+                    picker_overlay(&mut output, width, scene.height, depth, &controls);
+                }
             }
             terminal.write(&output)?;
             next_frame = now + interval;
+        }
+    }
+}
+
+fn prompt_name(terminal: &Terminal, depth: ColorDepth) -> io::Result<Option<String>> {
+    let mut bytes = Vec::new();
+    let mut decoder = InputDecoder::default();
+    let origin = Instant::now();
+    let mut error = String::new();
+    let mut previous = String::new();
+    loop {
+        if Terminal::signal() != 0 {
+            return Ok(None);
+        }
+        let (width, height) = terminal.size()?;
+        let width = width.clamp(1, 1024);
+        let height = height.clamp(1, 512);
+        let input = String::from_utf8_lossy(&bytes);
+        let lines = [
+            "NMATRIX / YOUR NAME",
+            "Type your name, then Enter. Saved for next time.",
+            &format!("> {input}"),
+            &error,
+            "Backspace edit / Esc or Ctrl+C cancel",
+        ];
+        let mut output = format!(
+            "\x1b[2J{}{}",
+            depth.background(),
+            depth.foreground([137, 255, 185])
+        );
+        for (row, line) in lines.iter().take(height).enumerate() {
+            write!(
+                output,
+                "\x1b[{};1H{}",
+                row + 1,
+                clip_text(line, width.saturating_sub(1))
+            )
+            .unwrap();
+        }
+        if output != previous {
+            terminal.write(&output)?;
+            previous = output;
+        }
+        decoder.push(&terminal.read(Duration::from_millis(16))?, origin.elapsed());
+        for key in decoder.events(origin.elapsed()) {
+            match key {
+                Key::Escape | Key::Char(3) => return Ok(None),
+                Key::Enter => {
+                    match std::str::from_utf8(&bytes)
+                        .map_err(|_| "Use a valid UTF-8 name".to_string())
+                        .and_then(validate_name)
+                    {
+                        Ok(name) => return Ok(Some(name)),
+                        Err(message) => error = message,
+                    }
+                }
+                Key::Backspace => {
+                    while let Some(byte) = bytes.pop() {
+                        if byte & 0xc0 != 0x80 {
+                            break;
+                        }
+                    }
+                    error.clear();
+                }
+                Key::Char(byte) if bytes.len() < 80 => {
+                    bytes.push(byte);
+                    error.clear();
+                }
+                _ => {}
+            }
         }
     }
 }
@@ -210,9 +320,15 @@ fn hud(output: &mut String, width: usize, height: usize, depth: ColorDepth, c: &
     );
     let hints = "  Tab scenes  c color  ? help  q quit ";
     let mut line = text;
-    if c.effects.echo { line.push_str(" / ECHO"); }
-    if c.effects.pulse { line.push_str(" / PULSE"); }
-    if c.effects.scanlines { line.push_str(" / SCAN"); }
+    if c.effects.echo {
+        line.push_str(" / ECHO");
+    }
+    if c.effects.pulse {
+        line.push_str(" / PULSE");
+    }
+    if c.effects.scanlines {
+        line.push_str(" / SCAN");
+    }
     if line.len() + hints.len() < width {
         line.push_str(&" ".repeat(width - 1 - line.len() - hints.len()));
         line.push_str(hints);
@@ -265,23 +381,50 @@ fn help_overlay(output: &mut String, width: usize, height: usize, depth: ColorDe
     }
 }
 
-fn picker_overlay(output: &mut String, width: usize, height: usize, depth: ColorDepth, c: &Controls) {
+fn picker_overlay(
+    output: &mut String,
+    width: usize,
+    height: usize,
+    depth: ColorDepth,
+    c: &Controls,
+) {
     let modes = nmatrix::engine::Mode::ALL;
     let count = height.saturating_sub(2).min(modes.len()).max(1);
-    let start = c.selection.saturating_sub(count/2).min(modes.len()-count);
-    let box_width = 48.min(width-2);
-    let x = (width-box_width)/2+1;
-    let y = (height-count-2)/2+1;
+    let start = c
+        .selection
+        .saturating_sub(count / 2)
+        .min(modes.len() - count);
+    let box_width = 48.min(width - 2);
+    let x = (width - box_width) / 2 + 1;
+    let y = (height - count - 2) / 2 + 1;
     let mut lines = vec![" NMATRIX / SCENES".to_string()];
     for (index, mode) in modes.iter().enumerate().skip(start).take(count) {
-        lines.push(format!(" {} {:02}  {}", if index == c.selection { ">" } else { " " }, index+1, mode.name().to_uppercase()));
+        lines.push(format!(
+            " {} {:02}  {}",
+            if index == c.selection { ">" } else { " " },
+            index + 1,
+            mode.name().to_uppercase()
+        ));
     }
     lines.push(" Up/Down choose / Enter play / Esc close".into());
     for (row, mut line) in lines.into_iter().enumerate() {
         line.truncate(box_width);
-        let highlight = row>0 && row<=count && start+row-1 == c.selection;
-        let color = if highlight { [138, 255, 184] } else { [137, 170, 183] };
-        write!(output, "\x1b[{};{}H{}{}{line:width$}", y+row, x, depth.background(), depth.foreground(color), width=box_width).unwrap();
+        let highlight = row > 0 && row <= count && start + row - 1 == c.selection;
+        let color = if highlight {
+            [138, 255, 184]
+        } else {
+            [137, 170, 183]
+        };
+        write!(
+            output,
+            "\x1b[{};{}H{}{}{line:width$}",
+            y + row,
+            x,
+            depth.background(),
+            depth.foreground(color),
+            width = box_width
+        )
+        .unwrap();
     }
 }
 

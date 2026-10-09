@@ -304,8 +304,16 @@ impl Scene {
             Mode::Waves => self.waves(),
             Mode::Spiral => self.spiral(),
             Mode::Starfield => self.starfield(),
-            mode => crate::patterns::render(&mut self.cells, self.width, self.height,
-                mode, self.density, self.glyphs, self.salt, self.time),
+            mode => crate::patterns::render(
+                &mut self.cells,
+                self.width,
+                self.height,
+                mode,
+                self.density,
+                self.glyphs,
+                self.salt,
+                self.time,
+            ),
         }
         if self.mode == Mode::Glitch && self.time < self.glitch_end {
             let (start, end, shift) = self.glitch_band;
