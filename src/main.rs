@@ -1,4 +1,5 @@
 use nmatrix::engine::{Cell, Palette, Scene};
+use nmatrix::effects::Effects;
 use nmatrix::options::{Controls, HELP, InputDecoder, Options};
 use nmatrix::render::{ColorDepth, Renderer, blend_frames};
 use nmatrix::terminal::Terminal;
@@ -20,6 +21,8 @@ fn run(options: Options) -> io::Result<i32> {
     let terminal = Terminal::open(0, 1)?;
     let depth = ColorDepth::detect();
     let mut renderer = Renderer::new(depth);
+    let mut effects = Effects::default();
+    let mut effect_dt = 0.0;
     let seed = options.seed;
     let interval = Duration::from_secs_f64(1.0 / options.fps as f64);
     let mut controls = Controls::new(options);
@@ -53,8 +56,9 @@ fn run(options: Options) -> io::Result<i32> {
         if Terminal::signal() != 0 {
             return Ok(128 + Terminal::signal());
         }
-        if !controls.paused && !controls.help {
+        if !controls.paused && !controls.help && !controls.picker {
             scene.update(dt * controls.speed);
+            effect_dt += dt * controls.speed;
             if controls.demo {
                 demo_time += dt;
             }
@@ -72,6 +76,7 @@ fn run(options: Options) -> io::Result<i32> {
             controls.palette,
             controls.hud,
             controls.help,
+            controls.picker,
         );
         let mut dirty = false;
         input.push(&bytes, now - origin);
@@ -98,6 +103,7 @@ fn run(options: Options) -> io::Result<i32> {
             || before.1 != controls.density
             || before.2 != controls.glyphs;
         if changed_scene || resized {
+            effects.reset();
             let old_frame = scene.frame().to_vec();
             width = w;
             height = h;
@@ -124,7 +130,7 @@ fn run(options: Options) -> io::Result<i32> {
         if before.3 != controls.palette {
             palette_fade = Some((before.3, 0.0));
         }
-        if before.5 != controls.help {
+        if before.5 != controls.help || before.6 != controls.picker {
             renderer.invalidate();
         }
         if dirty || now >= next_frame {
@@ -138,6 +144,7 @@ fn run(options: Options) -> io::Result<i32> {
                 output.push_str("\x1b[K");
             } else {
                 let scene_height = scene.height;
+                let scene_time = scene.time;
                 let target = scene.frame();
                 let blended;
                 let frame = if let Some(f) = &fade {
@@ -161,8 +168,10 @@ fn run(options: Options) -> io::Result<i32> {
                 if palette_from.is_none() {
                     palette_fade = None;
                 }
+                let frame = effects.apply(frame, width, effect_dt, scene_time, controls.effects);
+                effect_dt = 0.0;
                 output.push_str(&renderer.render(
-                    frame,
+                    &frame,
                     width,
                     scene_height,
                     controls.palette,
@@ -174,6 +183,7 @@ fn run(options: Options) -> io::Result<i32> {
                 if controls.help {
                     help_overlay(&mut output, width, scene.height, depth);
                 }
+                if controls.picker { picker_overlay(&mut output, width, scene.height, depth, &controls); }
             }
             terminal.write(&output)?;
             next_frame = now + interval;
@@ -198,8 +208,11 @@ fn hud(output: &mut String, width: usize, height: usize, depth: ColorDepth, c: &
         c.glyphs.name(),
         state
     );
-    let hints = "  1-6 modes  c color  ? help  q quit ";
+    let hints = "  Tab scenes  c color  ? help  q quit ";
     let mut line = text;
+    if c.effects.echo { line.push_str(" / ECHO"); }
+    if c.effects.pulse { line.push_str(" / PULSE"); }
+    if c.effects.scanlines { line.push_str(" / SCAN"); }
     if line.len() + hints.len() < width {
         line.push_str(&" ".repeat(width - 1 - line.len() - hints.len()));
         line.push_str(hints);
@@ -220,11 +233,14 @@ fn help_overlay(output: &mut String, width: usize, height: usize, depth: ColorDe
         "+-------------------------------------------------------+",
         "|                  NMATRIX / CONTROLS                   |",
         "|                                                       |",
-        "|  1-6       rain / waterfall / waves / spiral /         |",
-        "|            glitch / starfield                         |",
+        "|  Tab       choose any of the twelve scenes             |",
+        "|  1-9 / 0   quick scene selection                       |",
         "|  arrows/m  switch mode     c       color palette       |",
         "|  +/-       speed           [ ]     scene density       |",
         "|  g         glyph set       d       automatic demo      |",
+        "|  e         echo trails     p       brightness pulse    |",
+        "|  s         scanlines       r       surprise me         |",
+        "|  n         name banner                                |",
         "|  space     pause           h       hide controls       |",
         "|  q / Esc / Ctrl+C          quit                       |",
         "|                                                       |",
@@ -246,6 +262,26 @@ fn help_overlay(output: &mut String, width: usize, height: usize, depth: ColorDe
             &line[..box_width]
         )
         .unwrap();
+    }
+}
+
+fn picker_overlay(output: &mut String, width: usize, height: usize, depth: ColorDepth, c: &Controls) {
+    let modes = nmatrix::engine::Mode::ALL;
+    let count = height.saturating_sub(2).min(modes.len()).max(1);
+    let start = c.selection.saturating_sub(count/2).min(modes.len()-count);
+    let box_width = 48.min(width-2);
+    let x = (width-box_width)/2+1;
+    let y = (height-count-2)/2+1;
+    let mut lines = vec![" NMATRIX / SCENES".to_string()];
+    for (index, mode) in modes.iter().enumerate().skip(start).take(count) {
+        lines.push(format!(" {} {:02}  {}", if index == c.selection { ">" } else { " " }, index+1, mode.name().to_uppercase()));
+    }
+    lines.push(" Up/Down choose / Enter play / Esc close".into());
+    for (row, mut line) in lines.into_iter().enumerate() {
+        line.truncate(box_width);
+        let highlight = row>0 && row<=count && start+row-1 == c.selection;
+        let color = if highlight { [138, 255, 184] } else { [137, 170, 183] };
+        write!(output, "\x1b[{};{}H{}{}{line:width$}", y+row, x, depth.background(), depth.foreground(color), width=box_width).unwrap();
     }
 }
 

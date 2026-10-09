@@ -8,6 +8,43 @@ fn args(values: &[&str]) -> Vec<String> {
 }
 
 #[test]
+fn picker_reaches_all_scenes_and_escape_closes_without_quitting() {
+    let mut c = Controls::new(Options::parse(args(&["--mode", "blackhole"])).unwrap());
+    c.key(Key::Tab);
+    assert!(c.picker);
+    for _ in 0..5 { c.key(Key::Down); }
+    c.key(Key::Enter);
+    assert_eq!(c.mode, Mode::Fireworks);
+    assert!(!c.picker);
+    c.key(Key::Tab);
+    c.key(Key::Up);
+    c.key(Key::Escape);
+    assert!(!c.picker && c.running);
+    assert_eq!(c.mode, Mode::Fireworks);
+    for (key, mode) in [(b'7', Mode::Blackhole), (b'8', Mode::Galaxy), (b'9', Mode::Aurora), (b'0', Mode::Plasma)] {
+        c.key(Key::Char(key)); assert_eq!(c.mode, mode);
+    }
+}
+
+#[test]
+fn effects_flags_live_toggles_and_surprise_work() {
+    let opts = Options::parse(args(&["--mode", "galaxy", "--palette", "ice", "--echo", "--pulse", "--scanlines", "--seed", "1"])).unwrap();
+    let mut c = Controls::new(opts);
+    assert!(c.effects.echo && c.effects.pulse && c.effects.scanlines);
+    for key in b"eps" { c.key(Key::Char(*key)); }
+    assert!(!c.effects.echo && !c.effects.pulse && !c.effects.scanlines);
+    c.key(Key::Char(b'r'));
+    assert_ne!(c.mode, Mode::Galaxy);
+    assert_ne!(c.palette, Palette::Ice);
+    let signature = c.signature;
+    c.key(Key::Char(b'n'));
+    assert_ne!(c.signature, signature);
+    let mut decoder = InputDecoder::default();
+    decoder.push(b"\t\r", Duration::ZERO);
+    assert_eq!(decoder.events(Duration::ZERO), vec![Key::Tab, Key::Enter]);
+}
+
+#[test]
 fn arguments_validate_numbers_and_choices() {
     let opts = Options::parse(args(&[])).unwrap();
     assert_eq!(

@@ -180,6 +180,7 @@ fn all_modes_start_resize_and_quit_cleanly() {
         "spiral",
         "glitch",
         "starfield",
+        "blackhole", "galaxy", "aurora", "plasma", "tunnel", "fireworks",
     ] {
         let mut s = Session::new(&["--mode", mode, "--seed", "7"], false);
         s.wait_for("NMATRIX");
@@ -191,6 +192,24 @@ fn all_modes_start_resize_and_quit_cleanly() {
         s.send(b"q");
         s.finish(0);
     }
+}
+
+#[test]
+fn picker_and_live_effects_work_at_low_fps_and_resize() {
+    let mut s = Session::new(&["--mode", "galaxy", "--palette", "ice", "--echo", "--pulse", "--scanlines", "--fps", "1"], false);
+    s.wait_for("/ GALAXY /");
+    s.send(b"\t");
+    s.wait_for("NMATRIX / SCENES");
+    s.send(b"\x1b[B\x1b[B\x1b[B\x1b[B\r");
+    s.wait_for("/ FIREWORKS /");
+    s.send(b"eps\t");
+    s.resize(25, 8);
+    s.pump(Duration::from_millis(60));
+    s.send(b"\x1b");
+    s.pump(Duration::from_millis(60));
+    assert!(s.child.try_wait().unwrap().is_none());
+    s.send(b"q");
+    s.finish(0);
 }
 
 #[test]
