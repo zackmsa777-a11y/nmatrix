@@ -83,12 +83,12 @@ fn run(options: Options) -> io::Result<i32> {
             if controls.demo {
                 demo_time += dt;
             }
-        }
-        if let Some(f) = &mut fade {
-            f.age += dt;
-        }
-        if let Some((_, age)) = &mut palette_fade {
-            *age += dt;
+            if let Some(f) = &mut fade {
+                f.age += dt;
+            }
+            if let Some((_, age)) = &mut palette_fade {
+                *age += dt;
+            }
         }
         let before = (
             controls.mode,

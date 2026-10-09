@@ -381,6 +381,24 @@ fn pause_tiny_window_escape_and_ctrl_c_restore_terminal() {
 }
 
 #[test]
+fn scene_and_palette_transitions_freeze_during_pause_help_and_picker() {
+    for freeze in [b' ', b'?', b'\t'] {
+        let mut s = Session::new(&["--mode", "plasma", "--fps", "30", "--seed", "7"], false);
+        s.wait_for("NMATRIX");
+        s.send(&[b'm', b'c', freeze]);
+        s.pump(Duration::from_millis(60));
+        let start = s.output.len();
+        s.pump(Duration::from_millis(180));
+        assert!(
+            !s.output[start..].windows(4).any(|w| w == b"\x1b[1;"),
+            "scene row outside overlays changed while frozen by {freeze:?}"
+        );
+        s.send(b"q");
+        s.finish(0);
+    }
+}
+
+#[test]
 fn signals_restore_terminal_and_preserve_exit_status() {
     for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP, libc::SIGQUIT] {
         let mut s = Session::new(&[], false);

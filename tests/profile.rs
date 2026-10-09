@@ -81,6 +81,16 @@ fn clipping_handles_unicode_width_without_splitting_text() {
     assert_eq!(clip_text("محمد", 2), "مح");
 }
 #[test]
+fn emoji_and_combining_marks_stay_within_terminal_columns() {
+    assert_eq!(display_width("⌚⌛"), 4);
+    assert_eq!(clip_text(&"⌚".repeat(20), 16), "⌚".repeat(8));
+    assert_eq!(display_width("❤️"), 2);
+    assert_eq!(clip_text("❤️Zack", 1), "");
+    assert_eq!(clip_text("❤️Zack", 2), "❤️");
+    assert_eq!(clip_text("A\u{0301}Zack", 1), "A\u{0301}");
+    assert_eq!(clip_text("x\u{0085}y", 2), "xy");
+}
+#[test]
 fn large_name_masks_fit_and_unicode_falls_back_to_readable_text() {
     let mask = name_mask("Zack", 90, 20).unwrap();
     assert!(mask.len() <= 20 && mask.iter().all(|row| row.len() <= 90));

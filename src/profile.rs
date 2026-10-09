@@ -79,27 +79,75 @@ impl NameConfig {
 }
 
 fn char_width(c: char) -> usize {
-    let n = c as u32;
-    if c.is_control()
-        || matches!(n, 0x0300..=0x036f | 0x064b..=0x065f | 0x200b..=0x200f | 0xfe00..=0xfe0f)
-    {
+    if c.is_control() {
+        return 0;
+    }
+    unsafe extern "C" {
+        fn wcwidth(c: libc::wchar_t) -> libc::c_int;
+    }
+    // Use libc's full Unicode table without changing the process-wide locale.
+    // The immutable locale is shared and retained for the process lifetime.
+    static UTF8_LOCALE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let locale = *UTF8_LOCALE.get_or_init(|| unsafe {
+        for name in [c"C.UTF-8", c"C.utf8", c"en_US.UTF-8"] {
+            let locale = libc::newlocale(libc::LC_CTYPE_MASK, name.as_ptr(), std::ptr::null_mut());
+            if !locale.is_null() {
+                return locale as usize;
+            }
+        }
         0
-    } else if matches!(n, 0x1100..=0x115f | 0x2329..=0x232a | 0x2e80..=0xa4cf | 0xac00..=0xd7a3 | 0xf900..=0xfaff | 0xfe10..=0xfe19 | 0xfe30..=0xfe6f | 0xff00..=0xff60 | 0xffe0..=0xffe6 | 0x1f300..=0x1faff | 0x20000..=0x3ffff)
-    {
-        2
-    } else {
+    });
+    if locale != 0 {
+        // Only this thread switches locale; restore it immediately after wcwidth.
+        let width = unsafe {
+            let previous = libc::uselocale(locale as libc::locale_t);
+            let width = wcwidth(c as libc::wchar_t);
+            libc::uselocale(previous);
+            width
+        };
+        return width.max(0) as usize;
+    }
+    // A minimal system without UTF-8 locales gets conservative bounds.
+    if matches!(c as u32, 0x0300..=0x036f | 0x064b..=0x065f | 0x200b..=0x200f | 0xfe00..=0xfe0f) {
+        0
+    } else if c.is_ascii() {
         1
+    } else {
+        2
     }
 }
+
+// Keep trailing combining marks with their base. Emoji presentation/keycaps
+// can widen a one-column base even when wcwidth reports the selector as zero.
+fn text_units(text: &str) -> impl Iterator<Item = (&str, usize)> {
+    let mut chars = text.char_indices().peekable();
+    std::iter::from_fn(move || {
+        let (start, c) = chars.next()?;
+        let mut width = char_width(c);
+        while let Some(&(_, c)) = chars.peek() {
+            if char_width(c) != 0 {
+                break;
+            }
+            if matches!(c, '\u{fe0f}' | '\u{20e3}') && width > 0 {
+                width = width.max(2);
+            }
+            chars.next();
+        }
+        let end = chars.peek().map_or(text.len(), |&(offset, _)| offset);
+        Some((&text[start..end], width))
+    })
+}
 pub fn display_width(text: &str) -> usize {
-    text.chars().map(char_width).sum()
+    text_units(text).map(|(_, width)| width).sum()
 }
 pub fn clip_text(text: &str, width: usize) -> String {
     let mut used = 0;
-    text.chars()
-        .take_while(|&c| {
-            used += char_width(c);
+    text_units(text)
+        .take_while(|&(_, unit_width)| {
+            used += unit_width;
             used <= width
         })
+        .flat_map(|(unit, _)| unit.chars())
+        .filter(|c| !c.is_control())
         .collect()
 }
