@@ -45,14 +45,18 @@ fn arguments_validate_numbers_and_choices() {
 #[test]
 fn controls_cycle_and_bound_all_settings() {
     let mut c = Controls::new(Options::parse(args(&[])).unwrap());
-    for (i, &mode) in Mode::ALL.iter().enumerate() {
+    for (i, &mode) in Mode::ALL[..6].iter().enumerate() {
         c.key(Key::Char(b'1' + i as u8));
+        assert_eq!(c.mode, mode);
+    }
+    for &mode in &Mode::ALL[6..] {
+        c.key(Key::Right);
         assert_eq!(c.mode, mode);
     }
     c.key(Key::Right);
     assert_eq!(c.mode, Mode::Rain);
     c.key(Key::Left);
-    assert_eq!(c.mode, Mode::Starfield);
+    assert_eq!(c.mode, Mode::Fireworks);
     c.key(Key::Char(b'c'));
     assert_eq!(c.palette, Palette::Cyan);
     c.key(Key::Char(b'g'));

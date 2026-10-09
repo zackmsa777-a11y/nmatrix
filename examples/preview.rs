@@ -67,6 +67,12 @@ fn main() {
             Mode::Spiral => "Three rotating arms / balanced orbital motion",
             Mode::Glitch => "Fragmented rain / brief horizontal displacements",
             Mode::Starfield => "Depth particles / outward motion / directional trails",
+            Mode::Blackhole => "Dark event horizon / glowing accretion disc",
+            Mode::Galaxy => "Rotating spiral arms / stellar dust",
+            Mode::Aurora => "Flowing curtains / northern lights",
+            Mode::Plasma => "Molten fields / flowing contours",
+            Mode::Tunnel => "Expanding rings / hyperspace geometry",
+            Mode::Fireworks => "Rising rockets / sparks and falling embers",
         };
         write!(
             svg,

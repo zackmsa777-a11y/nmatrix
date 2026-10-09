@@ -1,5 +1,40 @@
 use nmatrix::engine::{Cell, GlyphSet, Mode, Palette, Scene, color};
 
+#[test]
+fn new_space_scenes_parse_and_produce_moving_visible_patterns() {
+    for name in ["blackhole", "galaxy", "aurora", "plasma", "tunnel", "fireworks"] {
+        let mode = Mode::parse(name).unwrap_or_else(|| panic!("missing scene: {name}"));
+        let mut scene = Scene::new(100, 30, mode, 0.8, GlyphSet::Matrix, 99);
+        scene.update(2.0);
+        let before = scene.frame().to_vec();
+        assert!(before.iter().filter(|c| c.level > 0.1).count() > 15, "empty {name}");
+        scene.update(0.3);
+        assert_ne!(before, scene.frame(), "static {name}");
+    }
+}
+
+#[test]
+fn blackhole_has_a_dark_core_and_visible_accretion_disc() {
+    let mode = Mode::parse("blackhole").expect("blackhole missing");
+    let mut scene = Scene::new(101, 31, mode, 1.0, GlyphSet::Matrix, 2);
+    scene.update(2.0);
+    let frame = scene.frame();
+    assert_eq!(frame[15 * 101 + 50].level, 0.0);
+    assert!(frame.iter().any(|c| c.level > 0.8));
+}
+
+#[test]
+fn extra_palettes_are_available_and_visually_distinct() {
+    let mut colors = Vec::new();
+    for name in ["rose", "ice", "sunset"] {
+        let palette = Palette::parse(name).expect("new palette missing");
+        let sample = color(palette, 0.7, 0.2);
+        assert!(sample.iter().any(|&v| v > 130));
+        assert!(!colors.contains(&sample));
+        colors.push(sample);
+    }
+}
+
 fn valid(frame: &[Cell], width: usize, height: usize) {
     assert_eq!(frame.len(), width * height);
     for cell in frame {

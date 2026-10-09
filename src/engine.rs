@@ -8,6 +8,12 @@ pub enum Mode {
     Spiral,
     Glitch,
     Starfield,
+    Blackhole,
+    Galaxy,
+    Aurora,
+    Plasma,
+    Tunnel,
+    Fireworks,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Palette {
@@ -16,6 +22,9 @@ pub enum Palette {
     Violet,
     Amber,
     Rainbow,
+    Rose,
+    Ice,
+    Sunset,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GlyphSet {
@@ -42,9 +51,12 @@ macro_rules! choices {
     };
 }
 choices!(Mode, Rain => "rain", Waterfall => "waterfall", Waves => "waves",
-         Spiral => "spiral", Glitch => "glitch", Starfield => "starfield");
+         Spiral => "spiral", Glitch => "glitch", Starfield => "starfield",
+         Blackhole => "blackhole", Galaxy => "galaxy", Aurora => "aurora",
+         Plasma => "plasma", Tunnel => "tunnel", Fireworks => "fireworks");
 choices!(Palette, Emerald => "emerald", Cyan => "cyan", Violet => "violet",
-         Amber => "amber", Rainbow => "rainbow");
+         Amber => "amber", Rainbow => "rainbow", Rose => "rose", Ice => "ice",
+         Sunset => "sunset");
 choices!(GlyphSet, Matrix => "matrix", Binary => "binary", Hex => "hex");
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -69,6 +81,12 @@ pub fn color(palette: Palette, level: f32, hue: f32) -> [u8; 3] {
         Palette::Cyan => [37.0, 207.0, 255.0],
         Palette::Violet => [188.0, 106.0, 255.0],
         Palette::Amber => [255.0, 177.0, 58.0],
+        Palette::Rose => [255.0, 82.0, 157.0],
+        Palette::Ice => [154.0, 238.0, 255.0],
+        Palette::Sunset => {
+            let mix = (hue * TAU).sin() * 0.5 + 0.5;
+            [255.0, 95.0 + 80.0 * mix, 155.0 - 90.0 * mix]
+        }
         Palette::Rainbow => {
             let h = hue.rem_euclid(1.0) * 6.0;
             let p = 0.22;
@@ -286,6 +304,8 @@ impl Scene {
             Mode::Waves => self.waves(),
             Mode::Spiral => self.spiral(),
             Mode::Starfield => self.starfield(),
+            mode => crate::patterns::render(&mut self.cells, self.width, self.height,
+                mode, self.density, self.glyphs, self.salt, self.time),
         }
         if self.mode == Mode::Glitch && self.time < self.glitch_end {
             let (start, end, shift) = self.glitch_band;
@@ -475,7 +495,7 @@ impl Scene {
     }
 }
 
-fn put(cells: &mut [Cell], width: usize, height: usize, x: i32, y: i32, mut cell: Cell) {
+pub(crate) fn put(cells: &mut [Cell], width: usize, height: usize, x: i32, y: i32, mut cell: Cell) {
     if x < 0 || y < 0 || x as usize >= width || y as usize >= height {
         return;
     }
@@ -487,7 +507,7 @@ fn put(cells: &mut [Cell], width: usize, height: usize, x: i32, y: i32, mut cell
     }
 }
 
-fn glyph(set: GlyphSet, salt: u64, x: usize, y: usize, time: f64) -> u8 {
+pub(crate) fn glyph(set: GlyphSet, salt: u64, x: usize, y: usize, time: f64) -> u8 {
     let alphabet: &[u8] = match set {
         GlyphSet::Matrix => b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ<>/{}[]+=*",
         GlyphSet::Binary => b"01",
@@ -501,7 +521,7 @@ fn glyph(set: GlyphSet, salt: u64, x: usize, y: usize, time: f64) -> u8 {
     alphabet[value as usize % alphabet.len()]
 }
 
-fn hash(mut x: u64) -> u64 {
+pub(crate) fn hash(mut x: u64) -> u64 {
     x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
     x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
