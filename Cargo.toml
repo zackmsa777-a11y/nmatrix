@@ -1,0 +1,16 @@
+[package]
+name = "nmatrix"
+version = "1.0.0"
+edition = "2024"
+description = "Modern, animated Matrix terminal scenes for Linux"
+license = "MIT"
+default-run = "nmatrix"
+
+[dependencies]
+libc = "=0.2.189"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "unwind"
